@@ -1,0 +1,19 @@
+sku,barcode,name,brand,category,variant,size_value,size_unit,description
+00001,0000000000001,Coca-Cola Original 330ml,Coca-Cola,Soft drinks,Original,330,ml,Single can
+00002,0000000000002,Coca-Cola Zero 330ml,Coca-Cola,Soft drinks,Zero,330,ml,Single can
+00003,0000000000003,Coca-Cola Zero 500ml,Coca-Cola,Soft drinks,Zero,500,ml,Single bottle
+00004,0000000000004,Pepsi Max 330ml,Pepsi,Soft drinks,Max,330,ml,Single can
+00005,0000000000005,Pepsi Original 330ml,Pepsi,Soft drinks,Original,330,ml,Single can
+00006,0000000000006,Nutella 400g,Nutella,Spreads,Hazelnut cocoa,400,g,Glass jar
+00007,0000000000007,Nutella 750g,Nutella,Spreads,Hazelnut cocoa,750,g,Large glass jar
+00008,0000000000008,Nivea Soft Cream 100ml,Nivea,Personal care,Soft,100,ml,Moisturizing cream
+00009,0000000000009,Nivea Soft Cream 200ml,Nivea,Personal care,Soft,200,ml,Moisturizing cream
+00010,0000000000010,Red Bull Original 250ml,Red Bull,Energy drinks,Original,250,ml,Single can
+00011,0000000000011,Red Bull Sugarfree 250ml,Red Bull,Energy drinks,Sugarfree,250,ml,Single can
+00012,0000000000012,Barilla Spaghetti 500g,Barilla,Pasta,Spaghetti,500,g,Dried pasta
+00013,0000000000013,Haribo Goldbears 175g,Haribo,Confectionery,Goldbears,175,g,Fruit gummies
+00014,0000000000014,Milka Alpine Milk 100g,Milka,Confectionery,Alpine milk,100,g,Chocolate bar
+00015,0000000000015,Alpro Oat Drink 1l,Alpro,Plant drinks,Oat,1,l,Carton
+00016,,Store Brand Sea Salt 500g,Store Brand,Seasoning,Fine,500,g,No barcode supplied
+,0000000000017,Lavazza Qualita Rossa 250g,Lavazza,Coffee,Ground,250,g,No retailer SKU
+,,Loose Herbal Tea 12.50g,,Tea,Herbal,12.50,g,Locally packed sample
