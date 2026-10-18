@@ -133,6 +133,26 @@ One Python modular monolith: Streamlit, SQLAlchemy/SQLite, Pydantic, and local
 Ollama. Future replacements attach through ports. No microservices, analytics
 dashboards, authentication, payments, or forecasting.
 
+```mermaid
+flowchart TD
+    UI["Streamlit UI"] --> APP["Application use cases and Pydantic schemas"]
+    APP --> DOMAIN["Domain objects, rules and events"]
+    APP --> PORTS["Repository, extractor, similarity, interchange and UoW ports"]
+    PORTS --> DOMAIN
+    DB["SQLAlchemy persistence adapter"] -. implements .-> PORTS
+    AI["Ollama / Gemma adapter"] -. implements .-> PORTS
+    SIM["Fuzzy similarity adapter"] -. implements .-> PORTS
+    CSV["CSV import / export adapter"] -. implements .-> PORTS
+    DB --> SQLITE[("SQLite: products and events")]
+    AI --> OLLAMA["Local Ollama runtime"]
+    ROOT["Composition root and settings"] --> APP
+    ROOT --> DB
+    ROOT --> AI
+    ROOT --> SIM
+    ROOT --> CSV
+    UI --> ROOT
+```
+
 ## Database setup
 
 With the environment activated, run from the repository root:
@@ -186,8 +206,8 @@ The application now exposes ImportInventory, ExtractProductFromImage,
 CheckProductDuplicates, ApproveNewProduct, UpdateExistingProduct, RejectCandidate,
 and ExportInventory through build_workflows(settings). The caller reviews and edits
 ProductCandidate before approval. Approvals revalidate, recheck duplicates, and
-commit product mutations with controlled events. No durable review-session table
-or UI workflow exists yet.
+commit product mutations with controlled events. The Streamlit MVP provides the UI
+workflow; there is no durable review-session table.
 
 Real-photo extraction accuracy and latency remain deployment concerns. The
 default timeout is 120 seconds. No test images are committed.
