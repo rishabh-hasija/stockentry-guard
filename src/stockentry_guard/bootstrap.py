@@ -13,6 +13,7 @@ from stockentry_guard.application.use_cases.check_duplicates import CheckDuplica
 from stockentry_guard.application.use_cases.check_product_duplicates import CheckProductDuplicates
 from stockentry_guard.application.use_cases.extract_product import ExtractProductFromImage
 from stockentry_guard.application.use_cases.inventory import ExportInventory, ImportInventory
+from stockentry_guard.application.use_cases.read_inventory import ListInventory, RecentActivity
 from stockentry_guard.application.use_cases.reject_candidate import RejectCandidate
 from stockentry_guard.config import Settings
 from stockentry_guard.domain.duplicates import DuplicateThresholds
@@ -63,6 +64,8 @@ class ApplicationWorkflows:
     update_existing_product: UpdateExistingProduct
     reject_candidate: RejectCandidate
     export_inventory: ExportInventory
+    list_inventory: ListInventory
+    recent_activity: RecentActivity
 
 
 def build_workflows(settings: Settings) -> ApplicationWorkflows:
@@ -87,4 +90,6 @@ def build_workflows(settings: Settings) -> ApplicationWorkflows:
         update_existing_product=UpdateExistingProduct(checker, factory),
         reject_candidate=RejectCandidate(factory),
         export_inventory=ExportInventory(CSVInventoryExporter(), factory),
+        list_inventory=ListInventory(factory),
+        recent_activity=RecentActivity(factory),
     )

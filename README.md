@@ -3,24 +3,22 @@
 AI-assisted inventory product onboarding for small retailers, built for
 Hacktoberfest Week 2.
 
-**Status: CSV import/export and onboarding application workflows are implemented.**
+**Status: Streamlit MVP, CSV import/export, and onboarding workflows are implemented.**
 SQLAlchemy repositories, atomic unit of work, versioned events, Alembic migrations,
 local Ollama extraction, and deterministic duplicate checking are available.
-The Streamlit page remains a placeholder. Candidates are never persisted without
-explicit approval.
+The Streamlit page exposes inventory, image extraction, duplicate review, approval,
+and recent activity. Candidates are never persisted without explicit approval.
 
 ## Application workflow
 
 After running the Alembic migration, call `build_workflows(settings)` from the
-composition root. Its seven use cases accept bytes or domain DTOs; a future UI
-will collect review edits and pass a fresh `ProductCandidate` with `approved=True`
+composition root. The Streamlit UI collects review edits and passes a fresh
+`ProductCandidate` with `approved=True`
 for create/update. Updates require the target product UUID and expected revision.
 Approvals with an unblocked likely match are blocked; there is no override yet.
 Each approval needs a stable, nonblank `command_id`. Reusing it with the same
 reviewed request returns the original ID/revision; changing the request raises
 `CommandReuseError`. A failed transaction leaves the key available for retry.
-
-
 Import inventory CSV -> upload product image -> extract with local Ollama/Gemma ->
 normalize -> check duplicates -> classify as NEW_PRODUCT, LIKELY_DUPLICATE, or
 NEEDS_REVIEW -> review/edit -> explicitly approve create/update or reject ->
@@ -34,12 +32,14 @@ Run from the repository root. PowerShell:
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe -m streamlit run src/stockentry_guard/ui/streamlit_app.py
 ```
 
 On macOS/Linux, use python3.12, .venv/bin/python, and cp instead.
 Where RTK is installed, prefix commands with `rtk proxy`.
-The scaffold does not need Ollama running or a database.
+Apply the database migration before opening the UI. Inventory and activity work
+without Ollama; image extraction needs the local Ollama server and configured model.
 
 ## Development checks
 
@@ -59,7 +59,7 @@ is needed. SQLAlchemy owns persistence; Alembic owns schema changes.
 ## Configuration
 
 Copy .env.example to .env. Settings are loaded by Alembic and passed explicitly to
-the composition root; the current placeholder UI does not instantiate settings.
+the composition root; the UI instantiates settings and services through bootstrap.
 
 | Variable | Default |
 | --- | --- |

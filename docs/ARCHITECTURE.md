@@ -13,7 +13,7 @@ portable value adapters, and Alembic migration 0001. There are two application
 tables and no review-state tables. Local Ollama extraction is implemented through
 AIProductExtractor, returning an unapproved candidate plus separate metadata.
 Deterministic matching, CSV import/export, and onboarding application use cases
-are implemented. The Streamlit UI remains a placeholder.
+are implemented. The Streamlit MVP now presents those workflows.
 
 ## Repository structure
 
@@ -50,7 +50,8 @@ Every package directory shown below has an __init__.py.
 |   |   |-- extraction_events.py
 |   |   |-- review.py, workflow_errors.py
 |   |   `-- use_cases/ (check_duplicates.py, check_product_duplicates.py, inventory.py,
-|   |                     extract_product.py, approve_product.py, reject_candidate.py)
+|   |                     extract_product.py, approve_product.py, reject_candidate.py,
+|   |                     read_inventory.py)
 |   |-- ports/
 |   |   |-- repositories.py
 |   |   |-- services.py
@@ -63,6 +64,7 @@ Every package directory shown below has an __init__.py.
 |   |   |-- similarity/ (deterministic.py)
 |   |   `-- inventory/ (csv_adapter.py)
 |   `-- ui/
+|       |-- state.py
 |       `-- streamlit_app.py
 `-- tests/
     |-- test_smoke.py
@@ -76,7 +78,9 @@ Every package directory shown below has an __init__.py.
     |-- test_migrations.py
     |-- test_csv_workflows.py
     |-- test_onboarding_workflows.py
-    `-- test_bootstrap_workflows.py
+    |-- test_bootstrap_workflows.py
+    |-- test_ui_state.py
+    `-- test_streamlit_app.py
 ```
 
 ## Module responsibilities and dependency direction
@@ -85,12 +89,12 @@ Every package directory shown below has an __init__.py.
 | --- | --- | --- |
 | domain | Product/candidate identity, comparison normalization, duplicate classification policy, events | Standard library only |
 | ports | ProductRepository, EventRepository, AIProductExtractor, SimilarityEngine, InventoryImporter, InventoryExporter, UnitOfWork | Domain and standard library |
-| application | Pydantic candidate and versioned event payload schemas; import, extract, check, approve, reject, export use cases | Domain, ports, Pydantic |
+| application | Pydantic candidate and versioned event payload schemas; import, extract, check, approve, reject, export and read use cases | Domain, ports, Pydantic |
 | infrastructure/persistence | SQLAlchemy mappings, repositories, session management, Alembic migrations, unit of work | Ports, domain, SQLAlchemy |
 | infrastructure/ai | Ollama request/response mapping, prompt, image limits, extraction validation | Ports, domain, application schemas, Ollama |
 | infrastructure/similarity | Deterministic fuzzy scoring and match evidence | Ports, domain |
 | infrastructure/inventory | CSV parsing/export and structured row errors | Ports, domain, application schemas, standard-library csv |
-| ui | Streamlit rendering, input capture, display of outcomes | Application and composition root |
+| ui | Streamlit rendering, transient review state, input capture, display of outcomes | Application and composition root |
 | bootstrap/config | Adapter construction, dependency injection, environment settings | Outer modules and configuration libraries |
 
 Dependencies point inward. Domain imports no Pydantic, Streamlit, SQLAlchemy,
@@ -182,7 +186,7 @@ resolved by import. `CSVInventoryExporter` writes the same columns, sorting by
 product UUID. It quotes with the standard CSV writer and prefixes dangerous
 spreadsheet formula cells in exported bytes only.
 
-`build_workflows(settings)` wires all seven use cases in bootstrap.py. Extraction
+`build_workflows(settings)` wires the workflow and read use cases in bootstrap.py. Extraction
 runs outside the transaction, then commits a metadata-only PRODUCT_EXTRACTED
 success event. Duplicate checking uses the deterministic engine and emits a
 classification event plus DUPLICATE_FOUND for a likely match. New and update
@@ -201,6 +205,16 @@ import, extraction, duplicate check, and rejection are independent commands.
 SQLite is the tested MVP database. Distinct concurrent approval IDs can still
 make decisions from overlapping catalog snapshots on other database engines;
 PostgreSQL needs dedicated concurrency tests and possibly stronger locking.
+
+The Streamlit page uses read-only ListInventory and RecentActivity use cases for
+its table, product count, comparison details, and operational event feed. The
+event repository reads the newest 20 stored events by sequence. The page sends
+CSV, image, duplicate-check, approval, update, rejection, and export actions to
+the composed use cases. Session state holds only upload/review data, the latest
+duplicate result, selected target, and command IDs. Editing reviewed fields
+invalidates the displayed duplicate result; approval services recheck inside the
+write transaction. The UI neither opens SQLAlchemy sessions nor commits writes.
+The activity feed displays controlled summaries, not arbitrary event payloads.
 
 ## Persistence and events
 

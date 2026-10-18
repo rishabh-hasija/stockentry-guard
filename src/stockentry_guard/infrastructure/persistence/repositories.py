@@ -132,3 +132,11 @@ class SQLAlchemyEventRepository:
             .limit(limit)
         ).all()
         return [StoredEvent(sequence=row.sequence, event=event_from_row(row)) for row in rows]
+
+    def read_recent(self, *, limit: int = 20) -> Sequence[StoredEvent]:
+        if limit < 1:
+            raise ValueError("Limit must be positive")
+        rows = self._session.scalars(
+            select(WorkflowEventRow).order_by(WorkflowEventRow.sequence.desc()).limit(limit)
+        ).all()
+        return [StoredEvent(sequence=row.sequence, event=event_from_row(row)) for row in rows]
