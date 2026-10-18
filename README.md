@@ -3,12 +3,23 @@
 AI-assisted inventory product onboarding for small retailers, built for
 Hacktoberfest Week 2.
 
-**Status: persistence, local AI extraction, and deterministic duplicate checking implemented.** SQLAlchemy
-repositories, atomic unit of work, versioned events, Alembic migrations, and the
-Ollama image extractor are available. The Streamlit page remains a placeholder.
-CSV import/export and review/approval workflows are not implemented. No candidates are automatically persisted.
+**Status: CSV import/export and onboarding application workflows are implemented.**
+SQLAlchemy repositories, atomic unit of work, versioned events, Alembic migrations,
+local Ollama extraction, and deterministic duplicate checking are available.
+The Streamlit page remains a placeholder. Candidates are never persisted without
+explicit approval.
 
-## Planned workflow
+## Application workflow
+
+After running the Alembic migration, call `build_workflows(settings)` from the
+composition root. Its seven use cases accept bytes or domain DTOs; a future UI
+will collect review edits and pass a fresh `ProductCandidate` with `approved=True`
+for create/update. Updates require the target product UUID and expected revision.
+Approvals with an unblocked likely match are blocked; there is no override yet.
+Each approval needs a stable, nonblank `command_id`. Reusing it with the same
+reviewed request returns the original ID/revision; changing the request raises
+`CommandReuseError`. A failed transaction leaves the key available for retry.
+
 
 Import inventory CSV -> upload product image -> extract with local Ollama/Gemma ->
 normalize -> check duplicates -> classify as NEW_PRODUCT, LIKELY_DUPLICATE, or
@@ -91,7 +102,7 @@ schema_version, and processing_ms. Confidence is a model-reported heuristic,
 never a calibrated probability or approval decision. Structured output does not
 guarantee factual correctness; all candidates require human review.
 
-Prompt retail-product-v1 requests visible/supported information only, distinct
+Prompt retail-product-v2 requests visible/supported information only, distinct
 brand/name/variant, unreadable values as null, no guessed SKU/barcode/size, basic
 visible unit labels, and JSON only. Extraction schema v1 forbids unknown keys,
 requires bounded confidence, and restricts uncertain_fields to product fields.
@@ -142,38 +153,44 @@ not unique database keys. Decimal sizes use lossless text storage to avoid SQLit
 float conversion; numeric SQL sorting/aggregation on size is not supported.
 SQLite stores UTC wall time; the adapter always returns timezone-aware UTC.
 
-Use build_unit_of_work_factory(settings) for explicit adapter wiring. Within a
+Use build_workflows(settings) for the composed application workflows, or
+build_unit_of_work_factory(settings) to wire a unit of work directly. Within a
 unit-of-work context, repositories stage writes; call commit() explicitly, or all
 work rolls back. update(product) compares its current revision and returns the
 next revision, provisional until commit. Stale updates abort the transaction.
 Append the related validated WorkflowEvent in the same unit of work. Repositories
-do not emit events or approve products automatically. Event UUID uniqueness is a
-guard against duplicate event insertion, not a complete command-idempotency system.
+do not emit events or approve products automatically. Approval commands use a
+deterministic event UUID derived from command_id. A
+repeated command with identical reviewed input returns the original product ID and
+revision without writing again; a reused key with different input fails.
 
 sample_data/inventory.csv contains 18 demonstration products, including optional
 identifiers and pack/variant differences. Barcodes and SKUs are synthetic fixtures,
 not verified retail identifiers. Tests load this file explicitly to verify string
-and Decimal round trips; there is no production CSV importer yet.
+and Decimal round trips. The
+CSV adapter accepts UTF-8 (including BOM), validates every row, reports structured
+row errors, and rejects duplicate rows or repeated nonblank SKU/barcode within a
+batch. Import writes all products and one INVENTORY_IMPORTED event atomically.
 
-The next import slice must validate all rows before writes, return structured
-row errors, fail an invalid batch without mutation, and commit successful rows
-with exactly one INVENTORY_IMPORTED event. It must not emit PRODUCT_CREATED for
-imported rows; that event belongs to the onboarding workflow. CSV columns are
-sku, barcode, name, brand, category, variant, size_value, size_unit, description;
-only name is required. Quantity, prices, costs, and sales are out of scope.
+CSV columns are sku, barcode, name, brand, category, variant, size_value,
+size_unit, description; only name is required. Export uses that column order,
+valid CSV quoting, deterministic product-ID order, and spreadsheet formula
+protection on output without changing stored values. Quantity, prices, costs,
+and sales are out of scope.
 
 Tests use isolated SQLite databases upgraded via Alembic. They also compare the
 migration with ORM metadata and compile PostgreSQL DDL without requiring a server.
 PostgreSQL runtime behavior is not yet integration-tested.
 
-Remaining slices: CSV validation/import and explicit user approval. Extraction is available independently through the port/manual script. No durable review sessions or workflow-state tables exist.
+The application now exposes ImportInventory, ExtractProductFromImage,
+CheckProductDuplicates, ApproveNewProduct, UpdateExistingProduct, RejectCandidate,
+and ExportInventory through build_workflows(settings). The caller reviews and edits
+ProductCandidate before approval. Approvals revalidate, recheck duplicates, and
+commit product mutations with controlled events. No durable review-session table
+or UI workflow exists yet.
 
-Manual verification on 2026-10-18 used the installed gemma3:4b (Q4_K_M) with an
-original synthetic product-label PNG outside the repository. The default
-120-second attempt timed out. A manual retry with a temporary 300-second timeout
-returned no meaningful product name and was rejected. No validated real-model
-candidate was produced; real-photo extraction accuracy remains unverified.
-The default timeout remains 120 seconds. No test images were added to git.
+Real-photo extraction accuracy and latency remain deployment concerns. The
+default timeout is 120 seconds. No test images are committed.
 
 ## Normalization and duplicate checking
 

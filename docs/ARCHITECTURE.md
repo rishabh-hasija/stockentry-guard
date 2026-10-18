@@ -12,8 +12,8 @@ and event repositories, an atomic unit of work, version-one payload validation,
 portable value adapters, and Alembic migration 0001. There are two application
 tables and no review-state tables. Local Ollama extraction is implemented through
 AIProductExtractor, returning an unapproved candidate plus separate metadata.
-Deterministic matching and the CheckDuplicates application use case are implemented.
-UI workflows, CSV parsing/validation, approval, and export remain unimplemented.
+Deterministic matching, CSV import/export, and onboarding application use cases
+are implemented. The Streamlit UI remains a placeholder.
 
 ## Repository structure
 
@@ -48,17 +48,20 @@ Every package directory shown below has an __init__.py.
 |   |   |-- event_payloads.py
 |   |   |-- extraction_schema.py
 |   |   |-- extraction_events.py
-|   |   `-- use_cases/ (check_duplicates.py)
+|   |   |-- review.py, workflow_errors.py
+|   |   `-- use_cases/ (check_duplicates.py, check_product_duplicates.py, inventory.py,
+|   |                     extract_product.py, approve_product.py, reject_candidate.py)
 |   |-- ports/
 |   |   |-- repositories.py
 |   |   |-- services.py
 |   |   |-- extraction.py
+|   |   |-- inventory.py
 |   |   `-- unit_of_work.py
 |   |-- infrastructure/
 |   |   |-- persistence/ (models.py, types.py, database.py, repositories.py, unit_of_work.py)
 |   |   |-- ai/ (ollama_extractor.py, prompts.py)
 |   |   |-- similarity/ (deterministic.py)
-|   |   `-- inventory/
+|   |   `-- inventory/ (csv_adapter.py)
 |   `-- ui/
 |       `-- streamlit_app.py
 `-- tests/
@@ -70,7 +73,10 @@ Every package directory shown below has an __init__.py.
     |-- test_events.py
     |-- test_extraction.py
     |-- test_persistence.py
-    `-- test_migrations.py
+    |-- test_migrations.py
+    |-- test_csv_workflows.py
+    |-- test_onboarding_workflows.py
+    `-- test_bootstrap_workflows.py
 ```
 
 ## Module responsibilities and dependency direction
@@ -79,11 +85,11 @@ Every package directory shown below has an __init__.py.
 | --- | --- | --- |
 | domain | Product/candidate identity, comparison normalization, duplicate classification policy, events | Standard library only |
 | ports | ProductRepository, EventRepository, AIProductExtractor, SimilarityEngine, InventoryImporter, InventoryExporter, UnitOfWork | Domain and standard library |
-| application | Pydantic candidate and versioned event payload schemas; future import, extract, check, approve, reject, export use cases | Domain, ports, Pydantic |
+| application | Pydantic candidate and versioned event payload schemas; import, extract, check, approve, reject, export use cases | Domain, ports, Pydantic |
 | infrastructure/persistence | SQLAlchemy mappings, repositories, session management, Alembic migrations, unit of work | Ports, domain, SQLAlchemy |
 | infrastructure/ai | Ollama request/response mapping, prompt, image limits, extraction validation | Ports, domain, application schemas, Ollama |
 | infrastructure/similarity | Deterministic fuzzy scoring and match evidence | Ports, domain |
-| infrastructure/inventory | Future CSV parsing/export and format errors | Ports, domain, application schemas, standard-library csv |
+| infrastructure/inventory | CSV parsing/export and structured row errors | Ports, domain, application schemas, standard-library csv |
 | ui | Streamlit rendering, input capture, display of outcomes | Application and composition root |
 | bootstrap/config | Adapter construction, dependency injection, environment settings | Outer modules and configuration libraries |
 
@@ -138,17 +144,21 @@ flowchart TD
    size evidence is flagged. Original reviewed values and normalized_name remain unchanged.
 4. **Check:** CheckDuplicates accepts a candidate and supplied Products, calls the
    existing SimilarityEngine.find_matches port, and applies domain classification
-   policy. A future caller loads Products through ProductRepository. The richer
+   policy. CheckProductDuplicates loads Products through ProductRepository and
+   emits controlled events. The richer
    SimilarityMatch retains its existing ID/score/reasons and adds typed signals
    and blockers. DuplicateResult contains classification, ordered matches, top
    score, top product ID, and decision reason codes. No ORM objects or model calls
-   cross the boundary. Nothing is persisted or merged by this use case.
+   cross the boundary. The pure checker does not persist or merge; the
+   inventory-backed use case persists DUPLICATE_CHECKED and, for likely matches,
+   DUPLICATE_FOUND.
 5. **Review:** show extracted values and matches. The user can edit, select a
    target product, approve creation/update, or reject. Edits invalidate the old
    duplicate decision; normalize and recheck before approval.
 6. **Approve:** revalidate approved fields and reload the selected target inside a
-   short unit of work. Persistence detects stale revisions; future use cases must also detect repeated
-   approval requests. Store PRODUCT_APPROVED and PRODUCT_CREATED or PRODUCT_UPDATED
+   short unit of work. Persistence detects stale revisions; approval commands
+   detect repeated requests through unique events. Store PRODUCT_APPROVED and
+   PRODUCT_CREATED or PRODUCT_UPDATED
    in the same transaction as the mutation. Roll back everything on failure.
    Rejection records PRODUCT_REJECTED without changing inventory.
 7. **Export:** load a consistent inventory snapshot, serialize through
@@ -158,7 +168,39 @@ flowchart TD
 Use cases should return typed results/errors, not UI calls. Keep inference and
 human review outside database transactions. Streamlit reruns must not repeat
 writes: use stable workflow/command IDs and database uniqueness for idempotency
-when workflows are implemented. Session state alone is not a durable guard.
+for approval commands. Session state alone is not a durable guard.
+
+## Implemented CSV and approval behavior
+
+`CSVInventoryImporter` decodes UTF-8 with optional BOM. It accepts the nine MVP
+columns (name required), reports structured row/field errors, and rejects
+identical rows or repeated nonblank SKU/barcode within one batch. All parsing and
+validation finish before ImportInventory starts a write transaction. Import needs
+explicit approval and commits all rows with one INVENTORY_IMPORTED event; the
+format does not cover quantity or prices. Existing catalog conflicts are not
+resolved by import. `CSVInventoryExporter` writes the same columns, sorting by
+product UUID. It quotes with the standard CSV writer and prefixes dangerous
+spreadsheet formula cells in exported bytes only.
+
+`build_workflows(settings)` wires all seven use cases in bootstrap.py. Extraction
+runs outside the transaction, then commits a metadata-only PRODUCT_EXTRACTED
+success event. Duplicate checking uses the deterministic engine and emits a
+classification event plus DUPLICATE_FOUND for a likely match. New and update
+approval require reviewed data and explicit approval, revalidate and recheck inside
+the unit of work, and block an unblocked likely match. Updates reload the chosen
+target and compare its expected revision. Rejection emits PRODUCT_REJECTED without
+changing inventory. Export loads an immutable snapshot before serializing.
+
+Approval `command_id` maps to a deterministic UUID for a reserved PRODUCT_APPROVED
+v2 event. Its payload includes the action, expected revision, result revision, and
+a SHA-256 fingerprint of the reviewed request, but no full candidate. The unique
+event constraint prevents a repeated key from running a second mutation. Identical
+retries return the original ID/revision; changed requests fail. The reservation,
+product write, and success events commit together. This is approval idempotency;
+import, extraction, duplicate check, and rejection are independent commands.
+SQLite is the tested MVP database. Distinct concurrent approval IDs can still
+make decisions from overlapping catalog snapshots on other database engines;
+PostgreSQL needs dedicated concurrency tests and possibly stronger locking.
 
 ## Persistence and events
 
@@ -178,7 +220,8 @@ WorkflowEvent includes event UUID, event type, UTC occurrence time, schema
 version, correlation/workflow UUID, optional product UUID, and a scalar payload
 copied into an immutable mapping. The adapter validates version-one Pydantic
 payloads by event type with extra fields forbidden; PRODUCT_EXTRACTED additionally
-supports version 2 for controlled extraction metadata. Arbitrary model JSON and
+supports version 2 for controlled extraction metadata; PRODUCT_APPROVED
+also supports version 2 for command idempotency metadata. Arbitrary model JSON and
 unknown versions are rejected before staging. Product mutation events require a
 product ID. EventRepository returns ordered workflow events or StoredEvent records
 through read_after(sequence, limit=...). Sequence is generated by persistence.
@@ -215,13 +258,13 @@ SQLAlchemyUnitOfWork uses one session/transaction, explicit commit, rollback on
 failure/uncommitted exit, and unconditional session close. A unit of work is
 single-use; returned updated objects are provisional until commit.
 
-| Event | When future use case emits it | Payload fields (v1 unless noted) |
+| Event | When application emits it | Payload fields (v1 unless noted) |
 | --- | --- | --- |
 | INVENTORY_IMPORTED | Successful committed import | accepted_count, source_fingerprint; batch identity uses correlation_id |
 | PRODUCT_EXTRACTED | Successful validated extraction | v1: model_tag, prompt_version, missing_field_count; v2: model_name, prompt_version, schema_version, confidence, uncertain_field_count, processing_ms |
 | DUPLICATE_CHECKED | Completed classification | classification, engine_version, threshold_version, top_score |
 | DUPLICATE_FOUND | Check identifies likely duplicate(s) | matched_product_id, score, reason_code |
-| PRODUCT_APPROVED | Accepted explicit user decision | action, reviewed_revision, command_id |
+| PRODUCT_APPROVED | Accepted explicit user decision | v1: action, reviewed_revision, command_id; v2 adds request_fingerprint and result_revision |
 | PRODUCT_CREATED | Product insert succeeds | revision (1); onboarding only |
 | PRODUCT_UPDATED | Product update succeeds | previous_revision, revision (consecutive) |
 | PRODUCT_REJECTED | User rejects candidate | reason_code (optional) |
@@ -231,7 +274,7 @@ reserved for onboarding. Rich before/after snapshots would require a future
 payload version; current events support workflow counts/timing, not historical
 attribute reconstruction. Never store raw images, prompts, or secrets in events.
 Image retention remains unresolved. Repositories do not automatically generate
-events: future application use cases must pair mutations with appropriate facts.
+events: application use cases pair mutations with the required facts.
 
 ## Local extraction boundary
 
@@ -243,7 +286,7 @@ version, and elapsed milliseconds. Typed failures distinguish MIME/size/empty
 input, unavailable service, timeout, provider failure, invalid/incomplete response,
 malformed JSON, schema errors, and missing product identity.
 
-Prompt retail-product-v1 asks for supported visual facts, null unknowns, no
+Prompt retail-product-v2 asks for supported visual facts, null unknowns, no
 invented identifiers or sizes, separate brand/base name/variant, and JSON only.
 The image text is treated as data. Pydantic extraction schema v1 forbids extras;
 strict string identifiers retain zeroes and decimal strings convert directly to
@@ -260,8 +303,9 @@ application.extraction_events.product_extracted_event creates a version-two
 envelope with allowlisted metadata only; extraction schema_version in the payload
 is independently versioned (currently 1). No raw images, responses, prompts,
 candidate attributes, or secrets are persisted. No schema migration or new table
-is needed. Existing version-one event validation remains compatible. Event
-persistence and human approval belong to later application use cases.
+is needed. Existing version-one event validation remains compatible. The
+extraction use case persists metadata after successful inference; approval is
+handled by separate use cases.
 
 ## Deterministic matching policy
 
@@ -344,27 +388,27 @@ event bus, or analytics implementation is part of this scaffold.
 
 ## Open questions and deliberate deferrals
 
-- CSV encoding, structured error format, and handling conflicts with existing
-  external identifiers. Columns are resolved: sku, barcode, name, brand, category,
-  variant, size_value, size_unit, description. Only name is required in CSV;
-  normalized_name and identity/timestamps are assigned after validation.
-  Quantity, price, cost, currency, suppliers, reorder levels, and sales are excluded.
+- Conflicts between imported rows and the existing catalog remain unhandled;
+  duplicate rows and repeated nonblank identifiers within one batch are rejected.
+  CSV uses UTF-8, fixed MVP columns, and structured row errors. Quantity, price,
+  cost, currency, suppliers, reorder levels, and sales are excluded.
 - Retailer-specific threshold calibration, generic-name false positives, variant
   vocabulary coverage, barcode trust, and labeled data for false-positive/negative evaluation.
 - Target hardware, chosen Gemma quantization, acceptable inference latency.
-- Image retention and command-idempotency storage. Durable review sessions are
-  explicitly deferred; no workflow-state, extraction-run, or duplicate-check
-  tables exist. Transient Streamlit state must never be the write-idempotency guard.
+- Image retention and durable review sessions are deferred. Approval idempotency
+  uses the existing unique event UUID and version-two PRODUCT_APPROVED payload;
+  no workflow-state, extraction-run, or duplicate-check tables exist. Transient
+  Streamlit state must never be the write-idempotency guard.
 - PostgreSQL runtime integration and any future numeric size-query requirements.
 - Distribution license and dependency locking strategy.
 
-These do not block this foundation. Implement remaining workflows and
-calibrate matching before presenting recommendations to users. Candidate data
-remains separate from Product and is never persisted automatically.
+These do not block the application slice. Calibrate matching before presenting
+recommendations to users. Candidate data remains separate from Product and is
+never persisted automatically.
 
 ## References
 
 - [SQLAlchemy session transactions](https://docs.sqlalchemy.org/en/20/orm/session_basics.html):
-  transaction lifecycle informs the planned UoW adapter.
+  transaction lifecycle informs the UoW adapter.
 - [Ollama Gemma 3 tags](https://ollama.com/library/gemma3/tags):
   verify vision support and available model tags before inference implementation.

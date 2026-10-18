@@ -41,6 +41,7 @@ from stockentry_guard.ports.extraction import (
 def workflows(sessions):
     def factory():
         return SQLAlchemyUnitOfWork(sessions)
+
     checks = CheckProductDuplicates(
         CheckDuplicates(DeterministicSimilarityEngine(), DuplicateThresholds()),
         factory,

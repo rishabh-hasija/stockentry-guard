@@ -22,6 +22,7 @@ from stockentry_guard.ports.inventory import InventoryImportError
 def test_valid_import_is_atomic_one_event_and_preserves_identifiers(sessions):
     def factory():
         return SQLAlchemyUnitOfWork(sessions)
+
     correlation = uuid4()
     result = ImportInventory(CSVInventoryImporter(), factory).execute(
         b"sku,barcode,name,size_value,size_unit\n0007,00123,Milk,0.33,l\n0008,00456,Bread,,\n",
@@ -77,6 +78,7 @@ def test_structured_csv_errors(content, field):
 def test_bad_batch_writes_nothing(sessions, content):
     def factory():
         return SQLAlchemyUnitOfWork(sessions)
+
     with pytest.raises(InventoryImportError):
         ImportInventory(CSVInventoryImporter(), factory).execute(
             content, correlation_id=uuid4(), approved=True
